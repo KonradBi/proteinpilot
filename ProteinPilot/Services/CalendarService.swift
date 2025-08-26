@@ -121,6 +121,9 @@ class CalendarService: ObservableObject {
         var count = 0
         let sortedEvents = upcomingEvents.sorted { ($0.startDate ?? Date()) < ($1.startDate ?? Date()) }
         
+        // Safety check to prevent range crash
+        guard sortedEvents.count > 1 else { return 0 }
+        
         for i in 0..<(sortedEvents.count - 1) {
             let currentEnd = sortedEvents[i].endDate ?? Date()
             let nextStart = sortedEvents[i + 1].startDate ?? Date()

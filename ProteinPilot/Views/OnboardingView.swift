@@ -441,14 +441,27 @@ struct OnboardingView: View {
     }
     
     private func setupUser() {
-        guard let weight = Double(bodyWeight) else { return }
+        guard let weight = Double(bodyWeight) else { 
+            print("❌ Invalid body weight: \(bodyWeight)")
+            return 
+        }
         
+        print("🚀 Creating user with target: \(proteinTarget)g")
         dataManager.createUser(
             proteinTarget: proteinTarget,
             eatingStart: eatingWindowStart,
             eatingEnd: eatingWindowEnd,
             bodyWeight: weight
         )
+        
+        // Force check if user was created
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let user = dataManager.getCurrentUser() {
+                print("✅ User created successfully: \(user.proteinDailyTarget)g target")
+            } else {
+                print("❌ User creation failed")
+            }
+        }
     }
 }
 

@@ -14,7 +14,9 @@ final class DataManager: ObservableObject {
             FoodItem.self,
             ProteinEntry.self,
             PlanSuggestion.self,
-            ProteinBalance.self
+            ProteinBalance.self,
+            CachedRecipe.self,
+            ProteinStreak.self
         ])
         
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
@@ -85,8 +87,12 @@ final class DataManager: ObservableObject {
         
         do {
             try context.save()
+            DispatchQueue.main.async {
+                self.objectWillChange.send()
+            }
+            print("✅ User saved to CoreData successfully")
         } catch {
-            print("Error saving user: \(error)")
+            print("❌ Error saving user: \(error)")
         }
     }
     
@@ -183,6 +189,7 @@ final class DataManager: ObservableObject {
             print("Error deleting entry: \(error)")
         }
     }
+    
     
     // MARK: - Quick Food Management
     
@@ -361,5 +368,242 @@ final class DataManager: ObservableObject {
                 situation: .onTheGo
             )
         ]
+    }
+    
+    // MARK: - Smart Aggregation
+    
+    /// Get aggregated entries for today (groups same food items together)
+    func getAggregatedEntriesForToday() -> [AggregatedEntry] {
+        let today = Calendar.current.startOfDay(for: Date())
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+        
+        let entries = getRecentEntries(limit: 200).filter { entry in
+            entry.date >= today && entry.date < tomorrow
+        }
+        
+        return aggregateEntries(entries)
+    }
+    
+    /// Get aggregated entries for a specific date
+    func getAggregatedEntries(for date: Date) -> [AggregatedEntry] {
+        let startOfDay = Calendar.current.startOfDay(for: date)
+        let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+        
+        let entries = getRecentEntries(limit: 200).filter { entry in
+            entry.date >= startOfDay && entry.date < endOfDay
+        }
+        
+        return aggregateEntries(entries)
+    }
+    
+    /// Aggregate entries by food item
+    private func aggregateEntries(_ entries: [ProteinEntry]) -> [AggregatedEntry] {
+        // Group by food item ID
+        let grouped = Dictionary(grouping: entries) { entry in
+            entry.foodItem?.id.uuidString ?? "unknown_\(entry.id.uuidString)"
+        }
+        
+        // Convert to aggregated entries
+        return grouped.compactMap { (_, entries) in
+            guard let firstEntry = entries.first,
+                  let foodItem = firstEntry.foodItem else { return nil }
+            
+            return AggregatedEntry(foodItem: foodItem, entries: entries)
+        }
+        .sorted { $0.lastEatenAt > $1.lastEatenAt } // Most recent first
+    }
+    
+    /// Convert planned meal to actual protein entries
+    @discardableResult
+    func completePlannedMeal(_ meal: PlannedMeal) -> [ProteinEntry] {
+        // For now, create a generic entry with estimated protein
+        // In the future, this could be more sophisticated based on the meal details
+        let entry = addProteinEntry(
+            quantity: meal.expectedProtein, // Use protein as quantity for now
+            proteinGrams: meal.expectedProtein
+        )
+        
+        meal.status = .completed
+        return [entry]
+    }
+    
+    // MARK: - Production Recipe Loading (Cache Only)
+    func loadRecommendationsWithCaching() async -> [RecommendationCard] {
+        // Production approach: Only use pre-seeded cached recipes (no API calls for users)
+        let cachedRecipes = loadCachedRecipes()
+        let stats = getCacheStatistics()
+        
+        print("✅ Loaded \(stats.total) recipes from cache (\(stats.localRecipes) local, \(stats.apiRecipes) pre-seeded)")
+        
+        // In production, we should always have 200+ pre-seeded recipes
+        if stats.total < 100 {
+            print("⚠️ Low recipe count (\(stats.total)) - consider running pre-launch seeding")
+        }
+        
+        return cachedRecipes
+    }
+    
+    // MARK: - Recipe API Integration  
+    func seedRecipesFromAPI() async {
+        await RecipeCacheService.shared.seedDatabaseFromAPI()
+    }
+    
+    func getCachedRecipes() async -> [RecommendationCard] {
+        return await RecipeCacheService.shared.loadCachedRecipes()
+    }
+    
+    // MARK: - Streak System Management
+    
+    func getCurrentStreak() -> ProteinStreak {
+        let request = FetchDescriptor<ProteinStreak>()
+        do {
+            let streaks = try context.fetch(request)
+            if let streak = streaks.first {
+                return streak
+            } else {
+                // Create initial streak
+                let newStreak = ProteinStreak()
+                context.insert(newStreak)
+                try context.save()
+                return newStreak
+            }
+        } catch {
+            print("Error fetching streak: \(error)")
+            return ProteinStreak()
+        }
+    }
+    
+    func updateStreakProgress() -> (badges: [StreakBadge], levelUp: ProteinLevel?) {
+        guard let user = getCurrentUser() else { return ([], nil) }
+        
+        let todaysProtein = getTodaysTotalProtein()
+        let targetHit = todaysProtein >= user.proteinDailyTarget
+        
+        let streak = getCurrentStreak()
+        let newBadges = streak.updateStreak(
+            todayHitTarget: targetHit, 
+            todaysProtein: todaysProtein, 
+            targetProtein: user.proteinDailyTarget
+        )
+        
+        // Check for level up
+        let levelUp = streak.checkForLevelUp()
+        
+        // Save updated streak
+        do {
+            try context.save()
+        } catch {
+            print("Error saving streak: \(error)")
+        }
+        
+        return (badges: newBadges, levelUp: levelUp)
+    }
+    
+    func checkDailyAchievements(entries: [ProteinEntry]) -> [DailyAchievement] {
+        var achievements: [DailyAchievement] = []
+        let today = Calendar.current.startOfDay(for: Date())
+        let streak = getCurrentStreak()
+        
+        // Reset daily achievements if it's a new day
+        let todayString = DateFormatter().string(from: today)
+        let lastAchievementDate = streak.todaysDailyAchievements.first?.split(separator: "_").first
+        if String(lastAchievementDate ?? "") != todayString {
+            streak.todaysDailyAchievements = []
+        }
+        
+        guard let user = getCurrentUser() else { return [] }
+        let todaysTotal = getTodaysTotalProtein()
+        let target = user.proteinDailyTarget
+        let progressPercentage = todaysTotal / target
+        
+        // INSTANT REWARDS (every protein entry triggers check)
+        
+        // First entry ever
+        if !streak.hasHadFirstEntry && !alreadyAchieved(.firstEntry, streak) {
+            achievements.append(.firstEntry)
+            streak.hasHadFirstEntry = true
+        }
+        
+        // Daily start (first entry of the day)
+        let todaysEntries = entries.filter { Calendar.current.isDate($0.date, inSameDayAs: today) }
+        if todaysEntries.count == 1 && !alreadyAchieved(.dailyStart, streak) {
+            achievements.append(.dailyStart)
+        }
+        
+        // Progress milestones (show highest achieved milestone not yet shown today)
+        if progressPercentage >= 1.0 && !alreadyAchieved(.goalReached, streak) {
+            achievements.append(.goalReached)
+        } else if progressPercentage >= 0.75 && !alreadyAchieved(.almostThere, streak) {
+            achievements.append(.almostThere)
+        } else if progressPercentage >= 0.5 && !alreadyAchieved(.halfwayThere, streak) {
+            achievements.append(.halfwayThere)
+        } else if progressPercentage >= 0.25 && !alreadyAchieved(.goodProgress, streak) {
+            achievements.append(.goodProgress)
+        }
+        
+        // TIME-BASED REWARDS
+        let currentHour = Calendar.current.component(.hour, from: Date())
+        
+        // Early Bird - protein before 9 AM
+        if currentHour < 9 && todaysTotal >= 15 && !alreadyAchieved(.earlyBird, streak) {
+            achievements.append(.earlyBird)
+        }
+        
+        // Midnight Warrior - after 22:00
+        if currentHour >= 22 && !alreadyAchieved(.midnightWarrior, streak) {
+            achievements.append(.midnightWarrior)
+        }
+        
+        // Weekend Warrior
+        let dayOfWeek = Calendar.current.component(.weekday, from: today)
+        if (dayOfWeek == 1 || dayOfWeek == 7) && todaysTotal >= target && !alreadyAchieved(.weekendWarrior, streak) {
+            achievements.append(.weekendWarrior)
+        }
+        
+        // BEHAVIOR REWARDS
+        
+        // Perfect Day - exactly target hit
+        if abs(todaysTotal - target) <= 5 && todaysTotal >= target && !alreadyAchieved(.perfectDay, streak) {
+            achievements.append(.perfectDay)
+        }
+        
+        // Power Day - 150%+ of target
+        if todaysTotal >= target * 1.5 && !alreadyAchieved(.powerDay, streak) {
+            achievements.append(.powerDay)
+        }
+        
+        // Variety - 5+ different protein sources
+        let uniqueFoodItems = Set(todaysEntries.compactMap { $0.foodItem?.id })
+        if uniqueFoodItems.count >= 5 && !alreadyAchieved(.variety, streak) {
+            achievements.append(.variety)
+        }
+        
+        // Comeback Kid - first entry after streak break
+        if streak.currentStreak == 1 && streak.bestStreak > 1 && !alreadyAchieved(.comebackKid, streak) {
+            achievements.append(.comebackKid)
+        }
+        
+        // Mark achievements as completed for today
+        for achievement in achievements {
+            let achievementKey = "\(todayString)_\(achievement.rawValue)"
+            if !streak.todaysDailyAchievements.contains(achievementKey) {
+                streak.todaysDailyAchievements.append(achievementKey)
+            }
+        }
+        
+        // Save streak updates
+        do {
+            try context.save()
+        } catch {
+            print("Error saving streak achievements: \(error)")
+        }
+        
+        return achievements
+    }
+    
+    private func alreadyAchieved(_ achievement: DailyAchievement, _ streak: ProteinStreak) -> Bool {
+        let today = DateFormatter().string(from: Calendar.current.startOfDay(for: Date()))
+        let achievementKey = "\(today)_\(achievement.rawValue)"
+        return streak.todaysDailyAchievements.contains(achievementKey)
     }
 }

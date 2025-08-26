@@ -30,7 +30,7 @@ struct FoodData {
     let barcode: String
 }
 
-enum BarcodeResult {
+enum CameraBarcodeResult {
     case success(FoodData)
     case failure(Error)
 }
@@ -123,9 +123,9 @@ struct CameraView: View {
     }
 }
 
-// MARK: - Barcode View
-struct BarcodeView: View {
-    let onResult: (BarcodeResult) -> Void
+// MARK: - Barcode View (Legacy in CameraView.swift)
+struct CameraBarcodeView: View {
+    let onResult: (CameraBarcodeResult) -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var openFoodFacts = OpenFoodFactsService.shared
     @State private var isLoading = false
@@ -264,7 +264,7 @@ struct BarcodeView: View {
 }
 
 #Preview("Barcode") {
-    BarcodeView { result in
+    CameraBarcodeView { result in
         switch result {
         case .success(let data):
             print("Barcode success: \(data.protein)g protein")

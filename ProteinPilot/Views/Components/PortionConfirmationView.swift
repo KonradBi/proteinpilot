@@ -160,7 +160,7 @@ struct PortionConfirmationView: View {
                     .font(.caption)
                     .fontWeight(.medium)
                 
-                Text("≈ \\(Int(nutritionData.quantity * portion.multiplier))g")
+                Text("≈ \(Int(nutritionData.quantity * portion.multiplier))g")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -194,7 +194,7 @@ struct PortionConfirmationView: View {
                         .font(.body)
                         .fontWeight(.semibold)
                     
-                    Text("\\(Int(adjustedData.quantity))g")
+                    Text("\(Int(adjustedData.quantity))g")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
@@ -209,7 +209,7 @@ struct PortionConfirmationView: View {
                 Spacer()
                 
                 VStack {
-                    Text("\\(Int(adjustedData.protein))")
+                    Text("\(Int(adjustedData.protein))")
                         .font(.title)
                         .fontWeight(.black)
                         .foregroundColor(.blue)
@@ -256,7 +256,7 @@ enum PortionSize: String, CaseIterable {
     }
     
     var description: String {
-        return "\\(rawValue.lowercased())e Portion"
+        return "\(rawValue.lowercased())e Portion"
     }
 }
 

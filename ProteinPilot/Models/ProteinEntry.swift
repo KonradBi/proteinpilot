@@ -11,6 +11,9 @@ final class ProteinEntry {
     var notes: String?
     var createdAt: Date
     var updatedAt: Date
+    var day: String? // YYYY-MM-DD format for easier filtering
+    var time: String? // HH:mm format
+    var status: EntryStatus?
     
     @Relationship
     var foodItem: FoodItem?
@@ -21,7 +24,8 @@ final class ProteinEntry {
         proteinGrams: Double,
         foodItem: FoodItem? = nil,
         mealType: String? = nil,
-        notes: String? = nil
+        notes: String? = nil,
+        status: EntryStatus = .done
     ) {
         self.id = UUID()
         self.date = date
@@ -30,8 +34,17 @@ final class ProteinEntry {
         self.foodItem = foodItem
         self.mealType = mealType
         self.notes = notes
+        self.status = status
         self.createdAt = Date()
         self.updatedAt = Date()
+        
+        // Format day and time
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        self.day = formatter.string(from: date)
+        
+        formatter.dateFormat = "HH:mm"
+        self.time = formatter.string(from: date)
     }
     
     var displayName: String {
@@ -39,5 +52,11 @@ final class ProteinEntry {
             return "\(Int(quantity))g \(foodItem.name)"
         }
         return "Protein: \(Int(proteinGrams))g"
+    }
+    
+    enum EntryStatus: String, Codable, CaseIterable {
+        case planned = "planned"
+        case done = "done"
+        case skipped = "skipped"
     }
 }
